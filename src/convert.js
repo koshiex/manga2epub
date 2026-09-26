@@ -158,3 +158,24 @@ export async function convert({ pages, meta, options, createSink, pool, onProgre
     throw err;
   }
 }
+
+/**
+ * Converts several books one after another with a shared pool and output folder.
+ * A failed book is reported and skipped; cancellation stops the whole batch.
+ * Returns [{ title, volumes }] or [{ title, error }] per book.
+ */
+export async function convertBooks({ books, meta, onBook, ...rest }) {
+  const results = [];
+  for (const [index, book] of books.entries()) {
+    rest.signal?.throwIfAborted();
+    onBook?.({ index, total: books.length, title: book.title });
+    try {
+      const volumes = await convert({ ...rest, pages: book.pages, meta: { ...meta, title: book.title } });
+      results.push({ title: book.title, volumes });
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      results.push({ title: book.title, error: err.message });
+    }
+  }
+  return results;
+}

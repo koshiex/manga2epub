@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { convert, volumeFileName } from '../src/convert.js';
+import { convert, convertBooks, volumeFileName } from '../src/convert.js';
 import { XT_MAX_PAGES } from '../src/xt-format.js';
 import { entryData, listZipEntries } from '../src/zip-reader.js';
 import { memorySink } from './helpers.js';
@@ -152,4 +152,57 @@ test('volumeFileName replaces characters forbidden in file names', () => {
 
 test('volumeFileName falls back to a default title', () => {
   assert.equal(volumeFileName('   ', 1, true, 'xtc'), 'manga - 02.xtc');
+});
+
+function runBooks(books, rest = {}) {
+  const { sinks, create } = sinkFactory();
+  const result = convertBooks({
+    books,
+    meta: META,
+    options: { image: {}, volumeBytes: 0, format: 'epub' },
+    createSink: create,
+    pool: fakePool(),
+    ...rest,
+  });
+  return { sinks, result };
+}
+
+const book = (title, ids) => ({ title, pages: ids.map((id) => page(id)) });
+
+test('convertBooks writes every book separately in order', async () => {
+  const { result } = runBooks([book('A', [1]), book('B', [2, 3])]);
+  assert.deepEqual(await result, [
+    { title: 'A', volumes: [{ name: 'A.epub', pages: 1 }] },
+    { title: 'B', volumes: [{ name: 'B.epub', pages: 2 }] },
+  ]);
+});
+
+test('convertBooks continues after a failed book', async () => {
+  const { result } = runBooks([book('A', [1]), book('B', [2])], {
+    pool: fakePool({ failing: new Set([1]) }),
+    onWarning: () => {},
+  });
+  const [failed, done] = await result;
+  assert.match(failed.error, /Ни одной страницы/);
+  assert.deepEqual(done, { title: 'B', volumes: [{ name: 'B.epub', pages: 1 }] });
+});
+
+test('convertBooks reports the start of each book', async () => {
+  const started = [];
+  const { result } = runBooks([book('A', [1]), book('B', [2])], { onBook: (info) => started.push(info) });
+  await result;
+  assert.deepEqual(started, [
+    { index: 0, total: 2, title: 'A' },
+    { index: 1, total: 2, title: 'B' },
+  ]);
+});
+
+test('convertBooks stops everything on cancel', async () => {
+  const controller = new AbortController();
+  const { sinks, result } = runBooks([book('A', [1]), book('B', [2])], {
+    signal: controller.signal,
+    onBook: ({ index }) => index === 1 && controller.abort(),
+  });
+  await assert.rejects(result, { name: 'AbortError' });
+  assert.deepEqual([...sinks.keys()], ['A.epub']);
 });

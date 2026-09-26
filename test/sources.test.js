@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPageList } from '../src/sources.js';
+import { bookTitle, buildBooks, buildPageList, commonTitle } from '../src/sources.js';
 
 const item = (path) => ({ path, source: { id: path } });
 const paths = (pages) => pages.map((page) => page.path);
@@ -42,4 +42,54 @@ test('names pages above chapter folders as the beginning', () => {
 test('keeps the source reference for each page', () => {
   const [page] = buildPageList([item('01.jpg')]);
   assert.deepEqual(page.source, { id: '01.jpg' });
+});
+
+const archive = (title, paths) => ({ title, items: paths.map(item) });
+const titles = (books) => books.map((book) => book.title);
+
+test('bookTitle drops the file extension', () => {
+  assert.equal(bookTitle('Berserk - Vol.01.cbz'), 'Berserk - Vol.01');
+});
+
+test('commonTitle cuts the shared prefix on a word boundary', () => {
+  assert.equal(commonTitle(['Когда плачут чайки - Vol.01', 'Когда плачут чайки - Vol.02']), 'Когда плачут чайки');
+});
+
+test('commonTitle keeps a single name as is', () => {
+  assert.equal(commonTitle(['Berserk - Vol.01']), 'Berserk - Vol.01');
+});
+
+test('commonTitle falls back to the first name when nothing is shared', () => {
+  assert.equal(commonTitle(['Berserk', 'Naruto']), 'Berserk');
+});
+
+test('separate mode makes one book per archive in natural order', () => {
+  const { books } = buildBooks([archive('B - Vol.10', ['01.jpg']), archive('B - Vol.2', ['01.jpg'])], 'separate');
+  assert.deepEqual(titles(books), ['B - Vol.2', 'B - Vol.10']);
+});
+
+test('separate mode keeps chapters inside each archive', () => {
+  const { books } = buildBooks([archive('Vol.01', ['Ch.1/01.jpg', 'Ch.2/01.jpg'])], 'separate');
+  assert.deepEqual(chapters(books[0].pages), ['Ch.1', 'Ch.2']);
+});
+
+test('merge mode joins archives in order under a common title', () => {
+  const { books } = buildBooks(
+    [archive('Umineko - Vol.02', ['Ch.3/01.jpg', 'Ch.3/02.jpg']), archive('Umineko - Vol.01', ['Ch.1/01.jpg', 'Ch.2/01.jpg'])],
+    'merge',
+  );
+  assert.deepEqual(titles(books), ['Umineko']);
+  assert.deepEqual(paths(books[0].pages), ['Ch.1/01.jpg', 'Ch.2/01.jpg', 'Ch.3/01.jpg', 'Ch.3/02.jpg']);
+  assert.deepEqual(chapters(books[0].pages), ['Ch.1', 'Ch.2', 'Ch.3', null]);
+});
+
+test('merge mode names chapters after flat archives', () => {
+  const { books } = buildBooks([archive('Ch 1', ['01.jpg', '02.jpg']), archive('Ch 2', ['01.jpg'])], 'merge');
+  assert.deepEqual(chapters(books[0].pages), ['Ch 1', null, 'Ch 2']);
+});
+
+test('buildBooks reports archives without pages', () => {
+  const { books, empty } = buildBooks([archive('Vol.01', ['01.jpg']), archive('Extras', ['readme.txt'])], 'separate');
+  assert.deepEqual(titles(books), ['Vol.01']);
+  assert.deepEqual(empty, ['Extras']);
 });

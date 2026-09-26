@@ -18,10 +18,10 @@
   <p id="unsupported" class="error" hidden></p>
 
   <section id="drop" class="drop">
-    <p><strong>Перетащите сюда .zip / .cbz</strong> или выберите:</p>
+    <p><strong>Перетащите сюда .zip / .cbz (можно несколько)</strong> или выберите:</p>
     <div class="row">
-      <label class="button">Архив<input id="pick-archive" type="file" accept=".zip,.cbz,application/zip" hidden></label>
-      <label class="button">Папку с картинками<input id="pick-folder" type="file" webkitdirectory hidden></label>
+      <label class="button">Архивы<input id="pick-archive" type="file" accept=".zip,.cbz,application/zip" multiple hidden></label>
+      <label class="button">Папку с картинками или архивами<input id="pick-folder" type="file" webkitdirectory hidden></label>
     </div>
     <p class="muted small">RAR/CBR и 7z не поддерживаются — пересохраните в ZIP.</p>
   </section>
@@ -81,6 +81,12 @@
 
     <fieldset>
       <legend>Вывод</legend>
+      <label id="batch-mode" hidden>Несколько архивов
+        <select name="batch">
+          <option value="separate">Каждый архив — отдельная книга</option>
+          <option value="merge">Объединить в одну книгу (архивы станут главами)</option>
+        </select>
+      </label>
       <label>Разбить на тома по, МБ
         <input name="volumeMb" type="number" min="0" max="4000" value="0" required>
         <span class="muted small">0 — одним файлом</span>

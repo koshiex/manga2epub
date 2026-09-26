@@ -16,6 +16,8 @@ Open http://127.0.0.1:8000. A local server is required: browsers do not load ES 
 
 - Reads only the ZIP central directory, then streams pages one by one (ZIP64 supported, stored and deflate entries).
 - Every subfolder becomes a chapter in the table of contents.
+- Several archives at once (multi-select, drag and drop, or a folder that contains only ZIP/CBZ files):
+  one book per archive, or one merged book where archives become chapters.
 - Optional processing in Web Workers: resize to the reader screen, grayscale, JPEG quality,
   double-page spreads (keep / split in reading order / rotate).
 - Without processing, JPG/PNG are copied byte for byte.
@@ -41,6 +43,7 @@ Not supported: RAR/CBR, 7z, encrypted ZIP. Kindle does not read EPUB natively â€
 
 ```sh
 npm test              # unit tests (Node 22+, uses unzip/xmllint)
-npm run test:browser  # headless Chrome smoke test of the real pipeline
+npm run test:browser  # headless Chrome: pipeline smoke test + UI end-to-end test
+node test/browser/run-ui.js --archives <folder>  # also convert real archives through the UI and print stats
 node test/fixtures/make-sample.js  # regenerate the smoke-test archive (macOS: sips + zip)
 ```

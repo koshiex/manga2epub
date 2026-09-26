@@ -52,3 +52,45 @@ export function buildPageList(items) {
     return { path: item.path, source: item.source, chapter: isChapterStart ? title : null };
   });
 }
+
+const TRAILING_SEPARATORS = /[\s\-–—_.,:]+$/u;
+const LAST_WORD = /\s\S*$/u;
+
+export const bookTitle = (fileName) => fileName.replace(/\.[^.]+$/, '');
+
+/** Shared beginning of the names, cut on a word boundary: "X - Vol.01", "X - Vol.02" → "X". */
+export function commonTitle(names) {
+  const [first = '', ...rest] = names;
+  let length = first.length;
+  for (const name of rest) {
+    let i = 0;
+    while (i < length && name[i] === first[i]) i++;
+    length = i;
+  }
+  if (length === first.length) return first;
+  const shared = first.slice(0, length);
+  const boundary = shared.search(LAST_WORD);
+  return (boundary >= 0 ? shared.slice(0, boundary) : '').replace(TRAILING_SEPARATORS, '') || first;
+}
+
+/** In a merged book an archive without inner folders still starts its own chapter. */
+function withChapterStart(book) {
+  if (book.pages.some((page) => page.chapter)) return book.pages;
+  const title = segmentsOf(book.pages[0].path).slice(0, -1).at(-1) ?? book.title;
+  return book.pages.map((page, i) => (i === 0 ? { ...page, chapter: title } : page));
+}
+
+/**
+ * archives: [{ title, items }] → { books: [{ title, pages }], empty: [titles without pages] }.
+ * mode 'separate': one book per archive; 'merge': one book, archives in natural order become chapters.
+ */
+export function buildBooks(archives, mode) {
+  const all = [...archives]
+    .sort((a, b) => collator.compare(a.title, b.title))
+    .map((archive) => ({ title: archive.title, pages: buildPageList(archive.items) }));
+  const books = all.filter((book) => book.pages.length > 0);
+  const empty = all.filter((book) => book.pages.length === 0).map((book) => book.title);
+  if (mode !== 'merge' || books.length <= 1) return { books, empty };
+  const merged = { title: commonTitle(books.map((book) => book.title)), pages: books.flatMap(withChapterStart) };
+  return { books: [merged], empty };
+}

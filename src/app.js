@@ -1,15 +1,18 @@
-import { convert } from './convert.js';
+import { convertBooks } from './convert.js';
 import { WorkerPool } from './pool.js';
 import { DEFAULT_PRESET_ID, DEFAULT_XTEINK_PRESET_ID, DEVICE_PRESETS } from './presets.js';
 import { downloadOutput, pickDirectoryOutput, revokeDownloads, supportsDirectoryOutput } from './sinks.js';
-import { buildPageList } from './sources.js';
+import { bookTitle, buildBooks } from './sources.js';
 import { DITHER_METHODS } from './xt-format.js';
 import { listZipEntries } from './zip-reader.js';
 
 const STORAGE_KEY = 'manga2epub:options';
 const PERSISTED_FIELDS = [
-  'format', 'author', 'lang', 'direction', 'device', 'width', 'height', 'grayscale', 'quality', 'dither', 'spreads', 'volumeMb',
+  'format', 'author', 'lang', 'direction', 'device', 'width', 'height', 'grayscale', 'quality', 'dither', 'spreads', 'volumeMb', 'batch',
 ];
+const ARCHIVE_EXTENSION = /\.(zip|cbz)$/i;
+const IMAGE_EXTENSION = /\.(jpe?g|png|webp|gif|bmp|avif)$/i;
+const MAX_LISTED_BOOKS = 10;
 const FORMATS = ['epub', 'xtc', 'xtch'];
 const SPREAD_MODES = ['keep', 'split', 'rotate'];
 const DEFAULT_DITHER = 'floyd';
@@ -37,9 +40,10 @@ const ui = {
   quality: $('quality-value'),
   outputHint: $('output-hint'),
   unsupported: $('unsupported'),
+  batchMode: $('batch-mode'),
 };
 
-let source = null; // { name, pages }
+let loaded = null; // { archives: [{ title, items }] } — a folder of images counts as one archive
 let running = null; // { controller, pool }
 let logLines = 0;
 
@@ -59,7 +63,6 @@ function formatDuration(seconds) {
 }
 
 const clampInt = (value, min, max) => Math.min(max, Math.max(min, Number.parseInt(value, 10) || 0));
-const stripExtension = (name) => name.replace(/\.[^.]+$/, '');
 
 function setStatus(text, failed = false) {
   ui.status.textContent = text;
@@ -182,34 +185,80 @@ function refreshForm(event) {
   ui.customSize.hidden = field('device').value !== 'custom';
   ui.quality.textContent = field('quality').value;
   ui.mode.textContent = describeMode(readOptions().options);
+  if (loaded && event?.target === field('batch')) renderSource();
 }
 
-function useSource(name, items) {
-  const pages = buildPageList(items);
-  if (pages.length === 0) throw new Error('Картинок не найдено (нужны jpg, png, webp, gif, bmp или avif)');
-  const bytes = pages.reduce((sum, page) => sum + (page.source.entry?.size ?? page.source.file.size), 0);
-  const chapters = pages.filter((page) => page.chapter).length;
-  source = { name, pages };
-  field('title').value = name;
-  ui.summary.textContent = `${name}: ${pages.length} стр., ${chapters > 0 ? `${chapters} глав` : 'без глав'}, ${formatBytes(bytes)}`;
+const currentBooks = () => (loaded ? buildBooks(loaded.archives, field('batch').value) : { books: [], empty: [] });
+const pageBytes = (page) => page.source.entry?.size ?? page.source.file.size;
+
+function describeBooks(books, archiveCount) {
+  const pages = books.reduce((sum, book) => sum + book.pages.length, 0);
+  const chapters = books.reduce((sum, book) => sum + book.pages.filter((page) => page.chapter).length, 0);
+  const bytes = books.reduce((sum, book) => sum + book.pages.reduce((total, page) => total + pageBytes(page), 0), 0);
+  const stats = `${pages} стр., ${chapters > 0 ? `глав: ${chapters}` : 'без глав'}, ${formatBytes(bytes)}`;
+  if (archiveCount <= 1) return `${books[0].title}: ${stats}`;
+  const listed = books.slice(0, MAX_LISTED_BOOKS).map((book) => `• ${book.title} — ${book.pages.length} стр.`);
+  const more = books.length > MAX_LISTED_BOOKS ? [`…и ещё ${books.length - MAX_LISTED_BOOKS}`] : [];
+  return [`Архивов: ${archiveCount} → книг: ${books.length}. Всего ${stats}`, ...listed, ...more].join('\n');
+}
+
+/** Recomputes books from loaded archives and the batch mode; one book keeps an editable title. */
+function renderSource() {
+  const { books } = currentBooks();
+  if (books.length === 0) throw new Error('Картинок не найдено (нужны jpg, png, webp, gif, bmp или avif)');
+  const isBatch = books.length > 1;
+  field('title').disabled = isBatch;
+  field('title').value = isBatch ? '' : books[0].title;
+  field('title').placeholder = isBatch ? 'Из имён архивов' : '';
+  ui.batchMode.hidden = loaded.archives.length <= 1;
+  ui.summary.textContent = describeBooks(books, loaded.archives.length);
   ui.summary.hidden = false;
   ui.start.disabled = false;
-  setStatus('');
 }
 
-async function loadArchive(file) {
-  setStatus(`Читаю оглавление ${file.name}…`);
+function useArchives(archives) {
+  const { books, empty } = buildBooks(archives, field('batch').value);
+  if (books.length === 0) throw new Error('Картинок не найдено (нужны jpg, png, webp, gif, bmp или avif)');
+  loaded = { archives };
+  clearLog();
+  setStatus('');
+  renderSource();
+  empty.forEach((title) => log(`Без картинок, пропущен: ${title}`));
+}
+
+async function readArchive(file) {
   const entries = await listZipEntries(file);
-  if (entries.some((entry) => entry.encrypted)) throw new Error('Архив зашифрован паролем — такие не поддерживаются');
+  if (entries.some((entry) => entry.encrypted)) throw new Error('архив зашифрован паролем — такие не поддерживаются');
   const items = entries
     .filter((entry) => !entry.name.endsWith('/'))
     .map((entry) => ({ path: entry.name, source: { file, entry } }));
-  useSource(stripExtension(file.name), items);
+  return { title: bookTitle(file.name), items };
 }
 
-function loadFolder(files) {
-  const items = [...files].map((file) => ({ path: file.webkitRelativePath || file.name, source: { file } }));
-  useSource(items[0]?.path.split('/')[0] ?? 'manga', items);
+/** Reads only the tables of contents; a broken archive is reported and skipped, not fatal for the rest. */
+async function loadArchives(files) {
+  setStatus(`Читаю оглавление: архивов ${files.length}…`);
+  const results = await Promise.allSettled(files.map(readArchive));
+  const archives = results.filter((result) => result.status === 'fulfilled').map((result) => result.value);
+  const failures = results
+    .map((result, i) => (result.status === 'rejected' ? `${files[i].name}: ${result.reason.message}` : null))
+    .filter(Boolean);
+  if (archives.length === 0) throw new Error(failures.join('\n'));
+  useArchives(archives);
+  failures.forEach((message) => log(`Пропущен архив ${message}`));
+}
+
+/** A folder with images is one book; a folder with only ZIP/CBZ files is a batch of archives. */
+async function loadFolder(files) {
+  const images = files.filter((file) => IMAGE_EXTENSION.test(file.name));
+  const archives = files.filter((file) => ARCHIVE_EXTENSION.test(file.name));
+  if (images.length === 0 && archives.length > 0) {
+    await loadArchives(archives);
+    return;
+  }
+  const items = files.map((file) => ({ path: file.webkitRelativePath || file.name, source: { file } }));
+  useArchives([{ title: items[0]?.path.split('/')[0] ?? 'manga', items }]);
+  if (archives.length > 0) log(`В папке есть и картинки, и архивы — архивы пропущены (${archives.length})`);
 }
 
 async function guard(action) {
@@ -231,13 +280,22 @@ function setBusy(busy) {
   });
 }
 
-function showProgress({ done, total, bytes }, startedAt) {
+function showProgress({ done, total, bytes }, { startedAt, label }) {
   const seconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
   const rate = done / seconds;
   ui.progress.value = done / total;
   setStatus(
-    `${done} / ${total} стр. · записано ${formatBytes(bytes)} · ${rate.toFixed(1)} стр/с · осталось ≈ ${formatDuration((total - done) / Math.max(rate, 0.001))}`,
+    `${label}${done} / ${total} стр. · записано ${formatBytes(bytes)} · ${rate.toFixed(1)} стр/с · осталось ≈ ${formatDuration((total - done) / Math.max(rate, 0.001))}`,
   );
+}
+
+function describeResults(results, seconds) {
+  const lines = results.map((result) =>
+    result.error
+      ? `✗ ${result.title}: ${result.error}`
+      : result.volumes.map((volume) => `✓ ${volume.name} — ${volume.pages} стр.`).join('\n'),
+  );
+  return `Готово за ${formatDuration(seconds)}:\n${lines.join('\n')}`;
 }
 
 async function openOutput() {
@@ -251,30 +309,39 @@ async function openOutput() {
 }
 
 async function start() {
-  if (!source || running || !form.reportValidity()) return;
+  if (!loaded || running || !form.reportValidity()) return;
   const { meta, options } = readOptions();
+  const { books } = currentBooks();
+  // A single book takes the (editable) title from the form; batches keep archive names.
+  const targets = books.length === 1 && meta.title ? [{ ...books[0], title: meta.title }] : books;
   const createSink = await openOutput();
   if (!createSink) return;
 
   revokeDownloads();
   clearLog();
+  setStatus('Запуск…');
   const workers = Math.min(MAX_WORKERS, Math.max(1, (navigator.hardwareConcurrency || 2) - 1));
   running = { controller: new AbortController(), pool: new WorkerPool(new URL('./worker.js', import.meta.url), workers) };
   setBusy(true);
   const startedAt = performance.now();
+  const progress = { startedAt, label: '' };
   try {
-    const volumes = await convert({
-      pages: source.pages,
+    const results = await convertBooks({
+      books: targets,
       meta,
       options,
       createSink,
       pool: running.pool,
       signal: running.controller.signal,
-      onProgress: (progress) => showProgress(progress, startedAt),
+      onBook: ({ index, total, title }) => {
+        progress.startedAt = performance.now();
+        progress.label = total > 1 ? `Книга ${index + 1}/${total} «${title}» · ` : '';
+      },
+      onProgress: (state) => showProgress(state, progress),
       onWarning: log,
     });
-    const files = volumes.map((volume) => `${volume.name} — ${volume.pages} стр.`).join('\n');
-    setStatus(`Готово за ${formatDuration((performance.now() - startedAt) / 1000)}:\n${files}`);
+    const allFailed = results.every((result) => result.error);
+    setStatus(describeResults(results, (performance.now() - startedAt) / 1000), allFailed);
   } catch (err) {
     setStatus(err.name === 'AbortError' ? 'Отменено, недописанный файл удалён' : `Ошибка: ${err.message}`, err.name !== 'AbortError');
   } finally {
@@ -293,13 +360,14 @@ function onDrop(event) {
   event.preventDefault();
   ui.drop.classList.remove('over');
   if (running) return;
-  const entry = event.dataTransfer.items?.[0]?.webkitGetAsEntry?.();
-  if (entry?.isDirectory) {
-    setStatus('Папку выберите кнопкой «Папку с картинками»', true);
+  const hasFolder = [...(event.dataTransfer.items ?? [])].some((item) => item.webkitGetAsEntry?.()?.isDirectory);
+  if (hasFolder) {
+    setStatus('Папку выберите кнопкой «Папку с картинками или архивами»', true);
     return;
   }
-  const [file] = event.dataTransfer.files;
-  if (file) guard(() => loadArchive(file));
+  const archives = [...event.dataTransfer.files].filter((file) => ARCHIVE_EXTENSION.test(file.name));
+  if (archives.length > 0) guard(() => loadArchives(archives));
+  else setStatus('Перетащите .zip или .cbz', true);
 }
 
 function checkSupport() {
@@ -322,9 +390,9 @@ function init() {
   form.addEventListener('input', refreshForm);
   form.addEventListener('change', saveOptions);
   ui.archive.addEventListener('change', async () => {
-    const [file] = ui.archive.files;
-    if (file) await guard(() => loadArchive(file));
-    ui.archive.value = ''; // picking the same file again must fire "change" again
+    const files = [...ui.archive.files];
+    if (files.length > 0) await guard(() => loadArchives(files));
+    ui.archive.value = ''; // picking the same files again must fire "change" again
   });
   ui.folder.addEventListener('change', async () => {
     const files = [...ui.folder.files];

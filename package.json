@@ -7,6 +7,6 @@
   "scripts": {
     "start": "python3 -m http.server 8000 --bind 127.0.0.1",
     "test": "node --test \"test/*.test.js\"",
-    "test:browser": "node test/browser/run-smoke.js"
+    "test:browser": "node test/browser/run-smoke.js && node test/browser/run-ui.js"
   }
 }
