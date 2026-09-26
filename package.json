@@ -1,0 +1,12 @@
+{
+  "name": "manga2epub",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local in-browser converter of manga image archives (ZIP/CBZ or folder) to fixed-layout EPUB for e-ink readers",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8000 --bind 127.0.0.1",
+    "test": "node --test \"test/*.test.js\"",
+    "test:browser": "node test/browser/run-smoke.js"
+  }
+}

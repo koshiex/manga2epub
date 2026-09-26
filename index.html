@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manga → EPUB</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="src/app.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Manga → EPUB</h1>
+    <p class="muted">Архив или папка с картинками → fixed-layout EPUB для e-ink читалок.
+      Всё работает в браузере: файлы никуда не загружаются и целиком в память не читаются.</p>
+  </header>
+
+  <p id="unsupported" class="error" hidden></p>
+
+  <section id="drop" class="drop">
+    <p><strong>Перетащите сюда .zip / .cbz</strong> или выберите:</p>
+    <div class="row">
+      <label class="button">Архив<input id="pick-archive" type="file" accept=".zip,.cbz,application/zip" hidden></label>
+      <label class="button">Папку с картинками<input id="pick-folder" type="file" webkitdirectory hidden></label>
+    </div>
+    <p class="muted small">RAR/CBR и 7z не поддерживаются — пересохраните в ZIP.</p>
+  </section>
+
+  <p id="summary" class="summary" hidden></p>
+
+  <form id="options" class="options">
+    <fieldset>
+      <legend>Формат</legend>
+      <label>Куда читать
+        <select name="format">
+          <option value="epub">EPUB — Kobo, PocketBook, Boox, KOReader</option>
+          <option value="xtc">XTC — Xteink, чёрно-белый 1 бит (быстрее листается)</option>
+          <option value="xtch">XTCH — Xteink, 4 оттенка серого (лучше полутона)</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Книга</legend>
+      <label>Название <input name="title" required maxlength="200"></label>
+      <label>Автор <input name="author" maxlength="200"></label>
+      <label>Язык (код) <input name="lang" value="ru" required maxlength="12" pattern="[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*"></label>
+      <label>Направление чтения
+        <select name="direction">
+          <option value="rtl">Справа налево (манга)</option>
+          <option value="ltr">Слева направо (комиксы, манхва)</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Картинки</legend>
+      <label>Экран читалки <select name="device"></select></label>
+      <div id="custom-size" class="row" hidden>
+        <label>Ширина <input name="width" type="number" min="100" max="10000" value="1264" required></label>
+        <label>Высота <input name="height" type="number" min="100" max="10000" value="1680" required></label>
+      </div>
+      <label class="check" data-only="epub"><input type="checkbox" name="grayscale" checked> Оттенки серого</label>
+      <label data-only="epub">Качество JPEG <input name="quality" type="range" min="50" max="100" value="85"> <output id="quality-value">85</output></label>
+      <label data-only="xt">Дизеринг
+        <select name="dither">
+          <option value="floyd">Floyd–Steinberg — мягкие полутона</option>
+          <option value="atkinson">Atkinson — контрастнее, чище линии</option>
+          <option value="none">Без дизеринга — чистый порог</option>
+        </select>
+      </label>
+      <label>Развороты (горизонтальные картинки)
+        <select name="spreads">
+          <option value="keep">Оставить как есть</option>
+          <option value="split">Разрезать на две страницы</option>
+          <option value="rotate">Повернуть на 90°</option>
+        </select>
+      </label>
+      <p id="mode" class="muted small"></p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Вывод</legend>
+      <label>Разбить на тома по, МБ
+        <input name="volumeMb" type="number" min="0" max="4000" value="0" required>
+        <span class="muted small">0 — одним файлом</span>
+      </label>
+      <p id="output-hint" class="muted small"></p>
+    </fieldset>
+  </form>
+
+  <div class="row">
+    <button id="start" type="button" disabled>Конвертировать</button>
+    <button id="cancel" type="button" class="secondary" hidden>Отмена</button>
+  </div>
+  <progress id="progress" max="1" value="0" hidden></progress>
+  <p id="status" class="status" role="status"></p>
+  <ul id="log" class="log"></ul>
+</main>
+<script>
+  // ES modules and workers do not load from file:// — explain instead of showing a dead page.
+  if (location.protocol === 'file:') {
+    const warning = document.getElementById('unsupported');
+    warning.textContent = 'Откройте через локальный сервер: в папке проекта запустите «python3 -m http.server 8000 --bind 127.0.0.1» и зайдите на http://127.0.0.1:8000';
+    warning.hidden = false;
+  }
+</script>
+</body>
+</html>
